@@ -9,6 +9,8 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from app.database import Base
 from app.models.user import User
+from app.models.team import Team
+from app.models.team_member import TeamMember
 
 config = context.config
 

@@ -1,12 +1,13 @@
 from fastapi import FastAPI
 from app.database import engine, Base
-from app.routers import auth
+from app.routers import auth, teams
 
 app = FastAPI(title="Task Manager", version="1.0.0")
 
 Base.metadata.create_all(bind=engine)
 
 app.include_router(auth.router)
+app.include_router(teams.router)
 
 @app.get("/")
 def read_root():
