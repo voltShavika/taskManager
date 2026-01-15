@@ -11,6 +11,8 @@ from app.database import Base
 from app.models.user import User
 from app.models.team import Team
 from app.models.team_member import TeamMember
+from app.models.task import Task
+from app.models.task_assignment import TaskAssignment
 
 config = context.config
 

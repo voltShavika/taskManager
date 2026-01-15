@@ -99,3 +99,73 @@ def get_team_details(
         "members": members
     }
     return team_dict
+
+@router.delete("/{team_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_team_member(
+    team_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+
+    if team.created_by != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team creator can remove members")
+
+    member = db.query(TeamMember).filter(
+        TeamMember.team_id == team_id,
+        TeamMember.user_id == user_id,
+        TeamMember.is_active == True
+    ).first()
+
+    if not member:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team member not found")
+
+    member.is_active = False
+    db.commit()
+
+@router.put("/{team_id}", response_model=TeamResponse)
+def update_team(
+    team_id: uuid.UUID,
+    team_data: TeamCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+
+    if team.created_by != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team creator can update")
+
+    team.name = team_data.name
+    team.description = team_data.description
+
+    db.commit()
+    db.refresh(team)
+    return team
+
+@router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_team(
+    team_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+
+    if team.created_by != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team creator can delete")
+
+    db.query(TeamMember).filter(TeamMember.team_id == team_id).delete()
+
+    team_tasks = db.query(Task).filter(Task.team_id == team_id).all()
+    for task in team_tasks:
+        db.query(TaskAssignment).filter(TaskAssignment.task_id == task.id).delete()
+
+    db.query(Task).filter(Task.team_id == team_id).delete()
+    db.delete(team)
+    db.commit()
