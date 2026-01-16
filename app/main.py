@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import engine, Base
-from app.routers import auth, teams, tasks, users
+from app.routers import auth, teams, tasks, users, tags
 from app.middleware import error_handler, performance_middleware
 
 app = FastAPI(
@@ -27,6 +27,7 @@ app.include_router(auth.router)
 app.include_router(teams.router)
 app.include_router(tasks.router)
 app.include_router(users.router)
+app.include_router(tags.router)
 
 @app.get("/")
 def read_root():

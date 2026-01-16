@@ -1,6 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 from app.models.user import UserRole
+from app.utils.pagination import PaginatedResponse
 import uuid
 
 class UserBase(BaseModel):
@@ -26,3 +27,6 @@ class UserResponse(UserBase):
 
     class Config:
         from_attributes = True
+
+class PaginatedUsersResponse(PaginatedResponse[UserResponse]):
+    pass

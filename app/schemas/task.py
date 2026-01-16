@@ -2,6 +2,8 @@ from pydantic import BaseModel, Field
 from datetime import datetime, date
 from typing import List, Optional
 from app.models.task import TaskStatus, TaskPriority
+from app.utils.pagination import PaginatedResponse
+from app.schemas.tag import TagResponse
 import uuid
 
 class TaskBase(BaseModel):
@@ -13,6 +15,7 @@ class TaskBase(BaseModel):
 
 class TaskCreate(TaskBase):
     team_id: uuid.UUID
+    tag_ids: Optional[List[uuid.UUID]] = None
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=200)
@@ -20,6 +23,7 @@ class TaskUpdate(BaseModel):
     status: Optional[TaskStatus] = None
     priority: Optional[TaskPriority] = None
     due_date: Optional[date] = None
+    tag_ids: Optional[List[uuid.UUID]] = None
 
 class TaskAssignmentCreate(BaseModel):
     user_id: uuid.UUID
@@ -41,6 +45,7 @@ class TaskResponse(TaskBase):
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime
+    tags: List[TagResponse] = []
 
     class Config:
         from_attributes = True
@@ -54,3 +59,6 @@ class TaskDetailResponse(TaskResponse):
 
 class BulkTaskUpdate(BaseModel):
     task_updates: List[dict] = Field(..., min_items=1)
+
+class PaginatedTasksResponse(PaginatedResponse[TaskResponse]):
+    pass

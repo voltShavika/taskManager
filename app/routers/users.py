@@ -1,18 +1,21 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from app.utils.pagination import paginate_query
 import uuid
 from app.database import get_db
 from app.models.user import User, UserRole
-from app.schemas.user import UserResponse
+from app.schemas.user import UserResponse, PaginatedUsersResponse
 from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/users", tags=["users"])
 
-@router.get("/", response_model=List[UserResponse])
+@router.get("/", response_model=PaginatedUsersResponse)
 def list_users(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(20, ge=1, le=100, description="Page size"),
     role: Optional[UserRole] = Query(None),
     search: Optional[str] = Query(None)
 ):
@@ -28,8 +31,7 @@ def list_users(
             User.username.contains(search) | User.email.contains(search)
         )
 
-    users = query.all()
-    return users
+    return paginate_query(query, page, size)
 
 @router.get("/{user_id}", response_model=UserResponse)
 def get_user(

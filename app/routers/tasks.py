@@ -1,6 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from datetime import date
+from app.utils.pagination import paginate_query
+from app.utils.query_builder import build_task_query_filters, parse_query_params_to_filters, build_advanced_task_query
+from app.schemas.filters import TaskFilters, AdvancedTaskFilters, FilterOperator
 import uuid
 from app.database import get_db
 from app.models.task import Task, TaskStatus, TaskPriority
@@ -8,9 +12,11 @@ from app.models.task_assignment import TaskAssignment
 from app.models.team import Team
 from app.models.team_member import TeamMember
 from app.models.user import User
+from app.models.tag import Tag
 from app.schemas.task import (
     TaskCreate, TaskUpdate, TaskResponse, TaskDetailResponse,
-    TaskAssignmentCreate, TaskAssignmentResponse, BulkTaskUpdate
+    TaskAssignmentCreate, TaskAssignmentResponse, BulkTaskUpdate,
+    PaginatedTasksResponse
 )
 from app.dependencies import get_current_user
 
@@ -46,36 +52,94 @@ def create_task(task_data: TaskCreate, db: Session = Depends(get_db), current_us
         created_by=current_user.id
     )
 
+    if task_data.tag_ids:
+        tags = db.query(Tag).filter(
+            Tag.id.in_(task_data.tag_ids),
+            Tag.team_id == task_data.team_id
+        ).all()
+
+        if len(tags) != len(task_data.tag_ids):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Some tag IDs are invalid or not from the same team"
+            )
+
+        task.tags = tags
+
     db.add(task)
     db.commit()
     db.refresh(task)
     return task
 
-@router.get("/", response_model=List[TaskResponse])
+@router.get("/", response_model=PaginatedTasksResponse)
 def list_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    team_id: Optional[uuid.UUID] = Query(None),
-    status: Optional[TaskStatus] = Query(None),
-    priority: Optional[TaskPriority] = Query(None),
-    assigned_to_me: Optional[bool] = Query(False)
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(20, ge=1, le=100, description="Page size"),
+    team_id: Optional[str] = Query(None, description="Team ID or comma-separated IDs"),
+    status: Optional[str] = Query(None, description="Status or comma-separated statuses (todo,in_progress,review,done,blocked)"),
+    priority: Optional[str] = Query(None, description="Priority or comma-separated priorities (low,medium,high,critical)"),
+    assigned_to_me: Optional[bool] = Query(False, description="Show only tasks assigned to current user"),
+    assignee_ids: Optional[str] = Query(None, description="Comma-separated assignee user IDs"),
+    created_by: Optional[str] = Query(None, description="Task creator user ID"),
+    due_date_before: Optional[date] = Query(None, description="Tasks due before this date"),
+    due_date_after: Optional[date] = Query(None, description="Tasks due after this date"),
+    due_date_on: Optional[date] = Query(None, description="Tasks due on this date"),
+    created_before: Optional[date] = Query(None, description="Tasks created before this date"),
+    created_after: Optional[date] = Query(None, description="Tasks created after this date"),
+    updated_before: Optional[date] = Query(None, description="Tasks updated before this date"),
+    updated_after: Optional[date] = Query(None, description="Tasks updated after this date"),
+    search: Optional[str] = Query(None, description="Search in title and description"),
+    tag_ids: Optional[str] = Query(None, description="Comma-separated tag IDs"),
+    tag_names: Optional[str] = Query(None, description="Comma-separated tag names"),
+    operator: FilterOperator = Query(FilterOperator.AND, description="Combine filters with AND or OR logic")
 ):
-    query = db.query(Task).join(Team).join(TeamMember).filter(
+    base_query = db.query(Task).join(Team).join(TeamMember).filter(
         TeamMember.user_id == current_user.id,
         TeamMember.is_active == True
     )
 
-    if team_id:
-        query = query.filter(Task.team_id == team_id)
-    if status:
-        query = query.filter(Task.status == status)
-    if priority:
-        query = query.filter(Task.priority == priority)
-    if assigned_to_me:
-        query = query.join(TaskAssignment).filter(TaskAssignment.user_id == current_user.id)
+    filters = parse_query_params_to_filters(
+        team_id=team_id,
+        status=status,
+        priority=priority,
+        assignee_ids=assignee_ids,
+        created_by=created_by,
+        assigned_to_me=assigned_to_me,
+        due_date_before=due_date_before,
+        due_date_after=due_date_after,
+        due_date_on=due_date_on,
+        created_before=created_before,
+        created_after=created_after,
+        updated_before=updated_before,
+        updated_after=updated_after,
+        search=search,
+        tag_ids=tag_ids,
+        tag_names=tag_names,
+        operator=operator
+    )
 
-    tasks = query.all()
-    return tasks
+    filtered_query = build_task_query_filters(base_query, filters, current_user.id)
+
+    return paginate_query(filtered_query, page, size)
+
+@router.post("/search", response_model=PaginatedTasksResponse)
+def advanced_search_tasks(
+    advanced_filters: AdvancedTaskFilters,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(20, ge=1, le=100, description="Page size")
+):
+    base_query = db.query(Task).join(Team).join(TeamMember).filter(
+        TeamMember.user_id == current_user.id,
+        TeamMember.is_active == True
+    )
+
+    filtered_query = build_advanced_task_query(base_query, advanced_filters, current_user.id)
+
+    return paginate_query(filtered_query, page, size)
 
 @router.get("/{task_id}", response_model=TaskDetailResponse)
 def get_task(task_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -118,7 +182,27 @@ def update_task(
 
     check_team_access(task.team_id, current_user, db)
 
-    for field, value in task_update.dict(exclude_unset=True).items():
+    update_data = task_update.dict(exclude_unset=True)
+
+    if 'tag_ids' in update_data:
+        tag_ids = update_data.pop('tag_ids')
+        if tag_ids:
+            tags = db.query(Tag).filter(
+                Tag.id.in_(tag_ids),
+                Tag.team_id == task.team_id
+            ).all()
+
+            if len(tags) != len(tag_ids):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Some tag IDs are invalid or not from the same team"
+                )
+
+            task.tags = tags
+        else:
+            task.tags = []
+
+    for field, value in update_data.items():
         setattr(task, field, value)
 
     db.commit()

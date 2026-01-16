@@ -39,6 +39,7 @@ class Task(Base):
     parent_task = relationship("Task", remote_side=[id], back_populates="subtasks")
     subtasks = relationship("Task", back_populates="parent_task")
     assignments = relationship("TaskAssignment", back_populates="task")
+    tags = relationship("Tag", secondary="task_tags", back_populates="tasks")
 
 from app.models.user import User
 from app.models.team import Team
