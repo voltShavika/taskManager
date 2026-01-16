@@ -46,6 +46,8 @@ class TaskResponse(TaskBase):
     created_at: datetime
     updated_at: datetime
     tags: List[TagResponse] = []
+    is_blocked: Optional[bool] = None
+    blocking_task_count: Optional[int] = None
 
     class Config:
         from_attributes = True

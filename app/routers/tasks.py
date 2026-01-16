@@ -9,10 +9,12 @@ import uuid
 from app.database import get_db
 from app.models.task import Task, TaskStatus, TaskPriority
 from app.models.task_assignment import TaskAssignment
+from app.models.task_dependency import TaskDependency, DependencyType
 from app.models.team import Team
 from app.models.team_member import TeamMember
 from app.models.user import User
 from app.models.tag import Tag
+from app.utils.dependency_logic import update_dependent_tasks_status, is_task_blocked, get_blocking_dependencies
 from app.schemas.task import (
     TaskCreate, TaskUpdate, TaskResponse, TaskDetailResponse,
     TaskAssignmentCreate, TaskAssignmentResponse, BulkTaskUpdate,
@@ -37,6 +39,15 @@ def check_team_access(team_id: uuid.UUID, current_user: User, db: Session):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return team
+
+def enrich_tasks_with_dependency_info(tasks: List[Task], db: Session) -> List[Task]:
+    for task in tasks:
+        task.is_blocked = is_task_blocked(task.id, db)
+        blocking_count = db.query(TaskDependency).filter(
+            TaskDependency.depends_on_task_id == task.id
+        ).count()
+        task.blocking_task_count = blocking_count
+    return tasks
 
 @router.post("/", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 def create_task(task_data: TaskCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -69,6 +80,12 @@ def create_task(task_data: TaskCreate, db: Session = Depends(get_db), current_us
     db.add(task)
     db.commit()
     db.refresh(task)
+
+    task.is_blocked = is_task_blocked(task.id, db)
+    task.blocking_task_count = db.query(TaskDependency).filter(
+        TaskDependency.depends_on_task_id == task.id
+    ).count()
+
     return task
 
 @router.get("/", response_model=PaginatedTasksResponse)
@@ -122,7 +139,7 @@ def list_tasks(
 
     filtered_query = build_task_query_filters(base_query, filters, current_user.id)
 
-    return paginate_query(filtered_query, page, size)
+    return paginate_query(filtered_query, page, size, enrich_tasks_with_dependency_info, db)
 
 @router.post("/search", response_model=PaginatedTasksResponse)
 def advanced_search_tasks(
@@ -139,7 +156,7 @@ def advanced_search_tasks(
 
     filtered_query = build_advanced_task_query(base_query, advanced_filters, current_user.id)
 
-    return paginate_query(filtered_query, page, size)
+    return paginate_query(filtered_query, page, size, enrich_tasks_with_dependency_info, db)
 
 @router.get("/{task_id}", response_model=TaskDetailResponse)
 def get_task(task_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -151,6 +168,11 @@ def get_task(task_id: uuid.UUID, db: Session = Depends(get_db), current_user: Us
 
     assignments = db.query(TaskAssignment).filter(TaskAssignment.task_id == task_id).all()
     subtasks = db.query(Task).filter(Task.parent_task_id == task_id).all()
+
+    task.is_blocked = is_task_blocked(task.id, db)
+    task.blocking_task_count = db.query(TaskDependency).filter(
+        TaskDependency.depends_on_task_id == task.id
+    ).count()
 
     task_dict = {
         "id": task.id,
@@ -164,6 +186,8 @@ def get_task(task_id: uuid.UUID, db: Session = Depends(get_db), current_user: Us
         "created_by": task.created_by,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
+        "is_blocked": task.is_blocked,
+        "blocking_task_count": task.blocking_task_count,
         "assignments": assignments,
         "subtasks": subtasks
     }
@@ -183,6 +207,7 @@ def update_task(
     check_team_access(task.team_id, current_user, db)
 
     update_data = task_update.dict(exclude_unset=True)
+    old_status = task.status
 
     if 'tag_ids' in update_data:
         tag_ids = update_data.pop('tag_ids')
@@ -207,6 +232,15 @@ def update_task(
 
     db.commit()
     db.refresh(task)
+
+    if old_status != TaskStatus.DONE and task.status == TaskStatus.DONE:
+        update_dependent_tasks_status(task.id, db)
+
+    task.is_blocked = is_task_blocked(task.id, db)
+    task.blocking_task_count = db.query(TaskDependency).filter(
+        TaskDependency.depends_on_task_id == task.id
+    ).count()
+
     return task
 
 @router.post("/{task_id}/assignments", response_model=TaskAssignmentResponse, status_code=status.HTTP_201_CREATED)
@@ -279,6 +313,12 @@ def create_subtask(
     db.add(subtask)
     db.commit()
     db.refresh(subtask)
+
+    subtask.is_blocked = is_task_blocked(subtask.id, db)
+    subtask.blocking_task_count = db.query(TaskDependency).filter(
+        TaskDependency.depends_on_task_id == subtask.id
+    ).count()
+
     return subtask
 
 @router.post("/bulk-update")

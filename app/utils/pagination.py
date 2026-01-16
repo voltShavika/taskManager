@@ -1,5 +1,5 @@
-from typing import Generic, TypeVar, List, Dict, Any
-from sqlalchemy.orm import Query
+from typing import Generic, TypeVar, List, Dict, Any, Callable, Optional
+from sqlalchemy.orm import Query, Session
 from pydantic import BaseModel
 from math import ceil
 
@@ -22,7 +22,13 @@ class PaginatedResponse(BaseModel, Generic[T]):
     has_next: bool
     has_prev: bool
 
-def paginate_query(query: Query, page: int = 1, size: int = 20) -> Dict[str, Any]:
+def paginate_query(
+    query: Query,
+    page: int = 1,
+    size: int = 20,
+    enricher: Optional[Callable[[List, Session], List]] = None,
+    db: Optional[Session] = None
+) -> Dict[str, Any]:
     page = max(1, page)
     size = min(100, max(1, size))
 
@@ -31,6 +37,9 @@ def paginate_query(query: Query, page: int = 1, size: int = 20) -> Dict[str, Any
 
     offset = (page - 1) * size
     items = query.offset(offset).limit(size).all()
+
+    if enricher and db:
+        items = enricher(items, db)
 
     return {
         "items": items,

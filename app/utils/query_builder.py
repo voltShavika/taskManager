@@ -4,6 +4,7 @@ from typing import List, Optional, Union
 from datetime import date
 from app.models.task import Task, TaskStatus, TaskPriority
 from app.models.task_assignment import TaskAssignment
+from app.models.task_dependency import TaskDependency, DependencyType
 from app.models.tag import Tag, task_tags
 from app.models.team_member import TeamMember
 from app.schemas.filters import TaskFilters, AdvancedTaskFilters, DateFilter, FilterOperator
